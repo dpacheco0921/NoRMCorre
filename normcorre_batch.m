@@ -1,4 +1,4 @@
-function [M_final,shifts_g,template] = normcorre_batch(Y,options,template)
+function [M_final,shifts_g,template,options,col_shift] = normcorre_batch(Y,options,template)
 
 % online motion correction through DFT subpixel registration
 % Based on the dftregistration.m function from Manuel Guizar and Jim Fienup
@@ -229,7 +229,7 @@ cnt_buf = 0;
 fprintf('Template initialization complete. \n')
 %%
 
-
+prevstr = [];
 for it = 1:iter
     for t = 1:bin_width:T
         switch filetype
@@ -350,18 +350,23 @@ for it = 1:iter
                     Mf{ii}(Mf{ii}>maxY)=maxY;
             
                 otherwise
+                    
                     shifts(ii).shifts_up = shifts(ii).shifts;
                     if nd == 3                
-                        tform = affine3d(diag([mot_uf(:);1]));
                         shifts_up = zeros([options.d1,options.d2,options.d3,3]);
-                        for dm = 1:3; shifts_up(:,:,:,dm) = imwarp(shifts_temp(:,:,:,dm),tform,'OutputView',imref3d([options.d1,options.d2,options.d3])); end
-                        shifts_up(2:2:end,:,:,2) = shifts_up(2:2:end,:,:,2) + col_shift;                        
-                        Mf{ii} = imwarp(Yt,-cat(3,shifts_up(:,:,2),shifts_up(:,:,1)),options.shifts_method); 
+                        if numel(shifts_temp) > 3
+                            tform = affine3d(diag([mot_uf(:);1]));
+                            for dm = 1:3; shifts_up(:,:,:,dm) = imwarp(shifts_temp(:,:,:,dm),tform,'OutputView',imref3d([options.d1,options.d2,options.d3])); end
+                        else
+                            for dm = 1:3; shifts_up(:,:,:,dm) = shifts_temp(dm); end
+                        end
+                        shifts_up(2:2:end,:,:,2) = shifts_up(2:2:end,:,:,2) + col_shift;
+                        Mf{ii} = imwarp(Yt,-cat(4,shifts_up(:,:,:,2),shifts_up(:,:,:,1),shifts_up(:,:,:,3)),options.shifts_method); 
                     else
                         shifts_up = imresize(shifts_temp,[options.d1,options.d2]);
                         shifts_up(2:2:end,:,2) = shifts_up(2:2:end,:,2) + col_shift;
                         Mf{ii} = imwarp(Yt,-cat(3,shifts_up(:,:,2),shifts_up(:,:,1)),options.shifts_method);  
-                    end        
+                    end   
             end
         end
 
@@ -397,8 +402,10 @@ for it = 1:iter
         end        
         end
         
+        str=[num2str(t+lY-1), ' out of ', num2str(T), ' frames registered, iteration ', num2str(it), ' out of ', num2str(iter), '..'];
+        refreshdisp(str, prevstr, t);
+        prevstr=str; 
         % update template
-        fprintf('%i out of %i frames registered, iteration %i out of %i \n',t+lY-1,T,it,iter)
         if upd_template
             cnt_buf = cnt_buf + 1;
             if nd == 2; buffer = mat2cell_ov(Mf,xx_s,xx_f,yy_s,yy_f,zz_s,zz_f,overlap_pre,sizY); end
