@@ -62,6 +62,11 @@ else % array loaded in memory
     Y = single(Y);
     sizY = size(Y);
 end
+if strcmpi(options.boundary,'nan')
+    fill_value = NaN;
+else
+    fill_value = options.add_value;
+end
 
 T = length(shifts);
 
@@ -131,12 +136,19 @@ switch lower(options.output_type)
         elseif nd == 3
             h5create(options.h5_filename,['/',options.h5_groupname],[d1,d2,d3,Inf],'Chunksize',[d1,d2,d3,options.mem_batch_size],'Datatype',data_type);
         end
+    case {'tif','tiff'}
+        M_final = options.tiff_filename;
+        opts_tiff.append = true;
+        opts_tiff.big = true;
+        if nd == 3
+            error('Saving volumetric tiff stacks is currently not supported. Use a different filetype');
+        end        
     otherwise
         error('This filetype is currently not supported')
 end 
 
 
-if exist('col_shift','var'); options.correct_bidir = false; else; col_shift = 0; end
+if exist('col_shift','var'); options.correct_bidir = false; else col_shift = 0; end
 if options.correct_bidir
     col_shift = correct_bidirectional_offset(Y,options.nFrames,options.bidir_us);
 end
@@ -210,7 +222,9 @@ for t = 1:bin_width:T
                 Mf{ii}(Mf{ii}>maxY) = maxY;    
             end
         otherwise
-            for ii = 1:lY 
+            for ii = 1:lY
+                minY = min(Ytc{ii}(:));
+                maxY = max(Ytc{ii}(:));
                 shifts_temp(ii).shifts_up = shifts_temp(ii).shifts;
                 if nd == 3                                    
                     shifts_up = zeros([options.d1,options.d2,options.d3,3]);
@@ -221,12 +235,14 @@ for t = 1:bin_width:T
                         for dm = 1:3; shifts_up(:,:,:,dm) = shifts_temp(ii).shifts(:,:,:,dm); end
                     end
                     shifts_up(2:2:end,:,:,2) = shifts_up(2:2:end,:,:,2) + col_shift;
-                    Mf{ii} = imwarp(Ytc{ii},-cat(4,shifts_up(:,:,:,2),shifts_up(:,:,:,1),shifts_up(:,:,:,3)),options.shifts_method);
+                    Mf{ii} = imwarp(Ytc{ii},-cat(4,shifts_up(:,:,:,2),shifts_up(:,:,:,1),shifts_up(:,:,:,3)),options.shifts_method,'FillValues',fill_value);
                 else
                     shifts_up = imresize(shifts_temp(ii).shifts,[options.d1,options.d2]);
                     shifts_up(2:2:end,:,2) = shifts_up(2:2:end,:,2) + col_shift;
-                    Mf{ii} = imwarp(Ytc{ii},-cat(3,shifts_up(:,:,2),shifts_up(:,:,1)),options.shifts_method);  
+                    Mf{ii} = imwarp(Ytc{ii},-cat(3,shifts_up(:,:,2),shifts_up(:,:,1)),options.shifts_method,'FillValues',fill_value);  
                 end
+                Mf{ii}(Mf{ii}<minY) = minY;
+                Mf{ii}(Mf{ii}>maxY) = maxY;
             end
     end
     
@@ -244,6 +260,8 @@ for t = 1:bin_width:T
             rem_mem = min(bin_width,T-t+1);
             if nd == 2; h5write(options.h5_filename,['/',options.h5_groupname],Mf,[ones(1,nd),t],[sizY(1:nd),rem_mem]); end
             if nd == 3; h5write(options.h5_filename,['/',options.h5_groupname],Mf,[ones(1,nd),t],[sizY(1:nd),rem_mem]); end
+        case {'tif','tiff'}
+            saveastiff(cast(Mf,data_type),options.tiff_filename,opts_tiff);
     end           
     fprintf('%i out of %i frames registered \n',t+lY-1,T)
 end

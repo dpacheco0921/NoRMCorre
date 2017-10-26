@@ -35,7 +35,11 @@ if isa(Y,'char')
     elseif strcmpi(ext,'mat')
         filetype = 'mem';
         Y = matfile(Y,'Writable',true);
-        sizY = size(Y);
+        details = whos(Y);
+        var_sizes = [details.bytes];
+        [~,var_ind] = max(var_sizes);
+        var_name = details(var_ind).name;
+        sizY = size(Y,var_name);
     elseif strcmpi(ext,'hdf5') || strcmpi(ext,'h5');
         filetype = 'hdf5';
         fileinfo = hdf5info(Y);
@@ -43,7 +47,8 @@ if isa(Y,'char')
     end    
 elseif isobject(Y);
     filetype = 'mem';
-    sizY = size(Y,'Y');
+    var_name = 'Y';
+    sizY = size(Y,var_name);
 else % array loaded in memory
     filetype = 'mat';
     Y = single(Y);
@@ -91,6 +96,12 @@ fr = options.fr;
 iter = options.iter;
 add_value = options.add_value;
 max_shift = options.max_shift;
+if strcmpi(options.boundary,'nan')
+    fill_value = NaN;
+else
+    fill_value = add_value;
+end
+    
 
 %% first check for offset due to bi-directional scanning
 
@@ -104,7 +115,7 @@ if options.correct_bidir
     end
 else
     col_shift = 0;
-end
+end 
 
 %% read initial batch and compute template
 perm = randperm(T,init_batch);
@@ -122,7 +133,7 @@ switch filetype
     case 'hdf5'
         Y_temp = bigread2(Y,1,init_batch);        
     case 'mem'
-        if nd == 2; Y_temp = Y.Y(:,:,1:init_batch); elseif nd == 3; Y_temp = Y.Y(:,:,:,1:init_batch); end
+        if nd == 2; Y_temp = Y.(var_name)(:,:,1:init_batch); elseif nd == 3; Y_temp = Y.(var_name)(:,:,:,1:init_batch); end
     case 'mat'
         if nd == 2; Y_temp = Y(:,:,perm); elseif nd == 3; Y_temp = Y(:,:,:,perm); end
 end
@@ -131,7 +142,21 @@ data_type = class(Y_temp);
 Y_temp = single(Y_temp);
 
 if nargin < 3 || isempty(template)
+    fprintf('Registering the first %i frames just to obtain a good template....',init_batch);
     template_in = median(Y_temp,nd+1)+add_value;
+    fftTemp = fftn(template_in);
+    for t = 1:size(Y_temp,nd+1);        
+        if nd == 2; 
+            [~,Greg] = dftregistration_min_max(fftTemp,fftn(Y_temp(:,:,t)),us_fac,-max_shift,max_shift,options.phase_flag);
+        end
+        if nd == 3; 
+            [~,Greg] = dftregistration_min_max_3d(fftTemp,fftn(Y_temp(:,:,:,t)),us_fac,-max_shift,max_shift,options.phase_flag); 
+        end
+        M_temp = real(ifftn(Greg));
+        template_in = template_in*(t-1)/t + M_temp/t;
+    end
+    template_in = template_in + add_value;
+    fprintf('..done. \n')
 else
     template_in = single(template + add_value);
 end
@@ -202,6 +227,13 @@ switch lower(options.output_type)
         elseif nd == 3
             h5create(options.h5_filename,['/',options.h5_groupname],[d1,d2,d3,Inf],'Chunksize',[d1,d2,d3,options.mem_batch_size],'Datatype',data_type);
         end
+    case {'tif','tiff'}
+        M_final = options.tiff_filename;
+        opts_tiff.append = true;
+        opts_tiff.big = true;
+        if nd == 3
+            error('Saving volumetric tiff stacks is currently not supported. Use a different filetype');
+        end        
     otherwise
         error('This filetype is currently not supported')
 end   
@@ -227,7 +259,7 @@ if plot_flag
         set(gcf, 'Position', round([100 100 fac*d2 fac*d1]));
 end
 cnt_buf = 0;
-fprintf('Template initialization complete. \n')
+fprintf('Template initialization complete.  Now registering all the frames with new template. \n')
 %%
 prevstr = [];
 for it = 1:iter
@@ -239,8 +271,8 @@ for it = 1:iter
             case 'hdf5'
                 Yt = single(h5read(Y,'/mov',[ones(1,nd),t],[sizY(1:nd),1]));
             case 'mem'
-                if nd == 2; Yt = single(Y.Y(:,:,t)); end
-                if nd == 3; Yt = single(Y.Y(:,:,:,t)); end
+                if nd == 2; Yt = single(Y.(var_name)(:,:,t)); end
+                if nd == 3; Yt = single(Y.(var_name)(:,:,:,t)); end
             case 'mat'
                 if nd == 2; Yt = single(Y(:,:,t)); end
                 if nd == 3; Yt = single(Y(:,:,:,t)); end
@@ -356,9 +388,7 @@ for it = 1:iter
                     Mf = cell2mat_ov_sum(M_fin,xx_us,xx_uf,yy_us,yy_uf,zz_us,zz_uf,overlap_post,sizY,Bs) - add_value;
                 else            
                     Mf = cell2mat_ov(M_fin,xx_us,xx_uf,yy_us,yy_uf,zz_us,zz_uf,overlap_post,sizY) - add_value;
-                end
-                Mf(Mf<minY) = minY;
-                Mf(Mf>maxY) = maxY;               
+                end                             
         
             otherwise
                 shifts(t).shifts_up = shifts(t).shifts;
@@ -371,12 +401,15 @@ for it = 1:iter
                         for dm = 1:3; shifts_up(:,:,:,dm) = shifts_temp(dm); end
                     end
                     shifts_up(2:2:end,:,:,2) = shifts_up(2:2:end,:,:,2) + col_shift;
-                    Mf = imwarp(Yt,-cat(4,shifts_up(:,:,:,2),shifts_up(:,:,:,1),shifts_up(:,:,:,3)),options.shifts_method); 
+                    Mf = imwarp(Yt,-cat(4,shifts_up(:,:,:,2),shifts_up(:,:,:,1),shifts_up(:,:,:,3)),options.shifts_method,'FillValues',fill_value); 
                 else
                     shifts_up = imresize(shifts_temp,[options.d1,options.d2]);
                     shifts_up(2:2:end,:,2) = shifts_up(2:2:end,:,2) + col_shift;
-                    Mf = imwarp(Yt,-cat(3,shifts_up(:,:,2),shifts_up(:,:,1)),options.shifts_method);  
-                end                    
+                    Mf = imwarp(Yt,-cat(3,shifts_up(:,:,2),shifts_up(:,:,1)),options.shifts_method,'FillValues',fill_value);  
+                end    
+             
+             Mf(Mf<minY) = minY;
+             Mf(Mf>maxY) = maxY;  
         end        
             
         if ~strcmpi(options.output_type,'mat')
@@ -396,10 +429,15 @@ for it = 1:iter
                     M_final.Yr(:,t-rem_mem+1:t) = reshape(mem_buffer(1:d1*d2*d3*rem_mem),d1*d2*d3,rem_mem);
                 end      
             case {'hdf5','h5'}
-                if rem_mem == options.mem_batch_size || t== T
+                if rem_mem == options.mem_batch_size || t == T
                     if nd == 2; h5write(options.h5_filename,['/',options.h5_groupname],mem_buffer(:,:,1:rem_mem),[ones(1,nd),t-rem_mem+1],[sizY(1:nd),rem_mem]); end
                     if nd == 3; h5write(options.h5_filename,['/',options.h5_groupname],mem_buffer(:,:,:,1:rem_mem),[ones(1,nd),t-rem_mem+1],[sizY(1:nd),rem_mem]); end
                 end
+            case {'tif','tiff'}
+                if rem_mem == options.mem_batch_size || t == T
+                    1
+                    saveastiff(cast(mem_buffer(:,:,1:rem_mem),data_type),options.tiff_filename,opts_tiff);
+                end                
         end         
         
         if mod(t,bin_width) == 0 && upd_template
