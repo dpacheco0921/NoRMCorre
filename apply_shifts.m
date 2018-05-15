@@ -50,8 +50,14 @@ if isa(Y,'char')
         sizY = [FOV,T];
         fclose(fid);
         data_type = 'single';
+    elseif strcmpi(ext,'avi')
+        filetype = 'avi';
+        v = VideoReader(Y);
+        T = v.Duration*v.FrameRate;
+        sizY = [v.Height,v.Width,T];
+        data_type = class(readFrame(v));
     end    
-elseif isobject(Y);
+elseif isobject(Y)
     filetype = 'mem';
     sizY = size(Y,'Y');
     details = whos(Y,'Y');
@@ -112,6 +118,16 @@ if strcmpi(options.shifts_method,'fft');
     end
     if nd == 2; Np = cellfun(@(x) 0,Nr,'un',0); end
     shift_fun = @(yfft,shfts,ph,nr,nc,np) shift_reconstruct(yfft,shfts,ph,options.us_fac,nr,nc,np,options.boundary,0);
+else
+    if nd == 3
+        dim = [d1,d2,d3];
+        ds = size(shifts(1).shifts);
+        do = [d1,d2,d3,1]./size(shifts(1).shifts);
+        %tform = affine3d(diag([do([2,1,3])';1]));
+        [Xq,Yq,Zq] = meshgrid(linspace((1+1/do(2))/2,ds(2)+(1-1/do(2))/2,dim(2)),linspace((1+1/do(1))/2,ds(1)+(1-1/do(1))/2,dim(1)),linspace((1+1/do(3))/2,ds(3)+(1-1/do(3))/2,dim(3)));
+    else
+        Xq = []; Yq = []; Zq = [];
+    end
 end
 
 switch lower(options.output_type)
@@ -148,7 +164,13 @@ switch lower(options.output_type)
 end 
 
 
-if exist('col_shift','var'); options.correct_bidir = false; else col_shift = 0; end
+if exist('col_shift','var'); options.col_shift = col_shift; end
+if ~isempty(options.col_shift) 
+    col_shift = options.col_shift; 
+    options.correct_bidir = false; 
+elseif ~options.correct_bidir
+    col_shift = 0;
+end
 if options.correct_bidir
     col_shift = correct_bidirectional_offset(Y,options.nFrames,options.bidir_us);
 end
@@ -159,7 +181,6 @@ if col_shift
         fprintf('Offset %1.1f pixels due to bidirectional scanning detected. Cubic shifts will be applied. \n',col_shift); 
     end
 end
-
 
 bin_width = min([options.mem_batch_size,T,ceil((512^2*3000)/(d1*d2*d3))]);
 for t = 1:bin_width:T
@@ -179,6 +200,8 @@ for t = 1:bin_width:T
             if nd == 3; Ytm = single(Y(:,:,:,t:min(t+bin_width-1,T))); end
         case 'raw'
             Ytm = read_raw_file(Y,t,min(t+bin_width-1,T)-t+1,FOV,bitsize);
+        case 'avi'
+            Ytm = read_file(Y,t,min(t+bin_width-1,T)-t+1);
     end
 %    if ~flag_constant
     if nd == 2; Ytc = mat2cell(Ytm,d1,d2,ones(1,size(Ytm,3))); end
@@ -188,11 +211,9 @@ for t = 1:bin_width:T
     lY = length(Ytc);
     shifts_temp = shifts(t:t+lY-1);
     
-      
     switch lower(options.shifts_method)
-        case 'fft'
-            for ii = 1:lY 
-                %shifts_temp(ii).diff(:) = 0;
+        case 'fft'            
+            parfor ii = 1:lY 
                 Yc = mat2cell_ov(Ytc{ii},xx_us,xx_uf,yy_us,yy_uf,zz_us,zz_uf,options.overlap_post,[d1,d2,d3]);
                 Yfft = cellfun(@(x) fftn(x),Yc,'un',0);
                 minY = min(Ytc{ii}(:));
@@ -222,15 +243,17 @@ for t = 1:bin_width:T
                 Mf{ii}(Mf{ii}>maxY) = maxY;    
             end
         otherwise
-            for ii = 1:lY
+            parfor ii = 1:lY
                 minY = min(Ytc{ii}(:));
                 maxY = max(Ytc{ii}(:));
                 shifts_temp(ii).shifts_up = shifts_temp(ii).shifts;
                 if nd == 3                                    
-                    shifts_up = zeros([options.d1,options.d2,options.d3,3]);
+                    shifts_up = zeros([d1,d2,d3,3]);
                     if numel(shifts_temp(ii).shifts) > 3
-                        tform = affine3d(diag([options.mot_uf(:);1]));
-                        for dm = 1:3; shifts_up(:,:,:,dm) = imwarp(shifts_temp(ii).shifts(:,:,:,dm),tform,'OutputView',imref3d([options.d1,options.d2,options.d3])); end
+                        %tform = affine3d(diag([options.mot_uf(:);1]));
+                        %tform = affine3d(diag([do([2,1,3])';1]));
+                        %for dm = 1:3; shifts_up(:,:,:,dm) = imwarp(shifts_temp(ii).shifts(:,:,:,dm),tform,'OutputView',imref3d([d1,d2,d3]),'SmoothEdges',true); end
+                        for dm = 1:3; shifts_up(:,:,:,dm) = interp3(shifts_temp(ii).shifts(:,:,:,dm),Xq,Yq,Zq,'makima'); end
                     else
                         for dm = 1:3; shifts_up(:,:,:,dm) = shifts_temp(ii).shifts(:,:,:,dm); end
                     end

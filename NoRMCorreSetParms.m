@@ -24,7 +24,7 @@ Names = [
     'shifts_method      ' % method to apply shifts ('FFT','cubic','linear')
     % template updating
     'upd_template       ' % flag for online template updating (default: true)
-    'init_batch         ' % length of initial batch (default: 30)
+    'init_batch         ' % length of initial batch (default: 100)
     'bin_width          ' % width of each bin (default: 10)
     'buffer_width       ' % number of local means to keep in memory (default: 50)
     'method             ' % method for averaging the template (default: {'median';'mean})
@@ -56,6 +56,7 @@ Names = [
     'correct_bidir      ' % check for offset due to bidirectional scanning (default: true)
     'nFrames            ' % number of frames to average (default: 50)
     'bidir_us           ' % upsampling factor for bidirectional sampling (default: 10)
+    'col_shift          ' % known bi-directional offset provided by the user (default: [])
    ]; 
    
 [m,n] = size(Names);
@@ -153,7 +154,7 @@ Values = [
     {'FFT'}               % method for applying shifts ('FFT', 'linear', 'cubic')
     % template updating
     {true}                % flag for online template updating (default: true)
-    {30}                  % length of initial batch (default: 30)
+    {100}                 % length of initial batch (default: 100)
     {50}                  % width of each bin (default: 10)
     {50}                  % number of local means to keep in memory (default: 50)
     {{'median';'mean'}}   % method for averaging the template (default: {'median';'mean'}
@@ -184,6 +185,7 @@ Values = [
     {true}
     {50}
     {10}
+    {[]}
     ];
 
 for j = 1:m
@@ -198,6 +200,8 @@ if isempty(options.d2); options.d2 = input('What is the total number of columns?
 if isempty(options.grid_size); options.grid_size = [options.d1,options.d2,options.d3]; end
 if length(options.grid_size) == 1; options.grid_size = options.grid_size*ones(1,3); end
 if length(options.grid_size) == 2; options.grid_size(3) = 1; end
+if length(options.min_patch_size) == 1; options.min_patch_size = options.min_patch_size*ones(1,3); end
+if length(options.min_patch_size) == 2; options.min_patch_size(3) = 1; end
 if length(options.overlap_pre) == 1; options.overlap_pre = options.overlap_pre*ones(1,3); end
 if length(options.overlap_pre) == 2; options.overlap_pre(3) = 1; end
 if length(options.overlap_post) == 1; options.overlap_post = options.overlap_post*ones(1,3); end

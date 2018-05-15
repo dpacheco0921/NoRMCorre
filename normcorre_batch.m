@@ -107,19 +107,21 @@ end
 
 %% first check for offset due to bi-directional scanning
 
-if options.correct_bidir
+if options.correct_bidir && isempty(options.col_shift)
     col_shift = correct_bidirectional_offset(Y,options.nFrames,options.bidir_us);
-    if col_shift
-        if strcmpi(options.shifts_method,'fft')
-            options.shifts_method = 'cubic';
-            fprintf('Offset %1.1f pixels due to bidirectional scanning detected. Cubic shifts will be applied. \n',col_shift); 
-        end
-    end
+elseif ~isempty(options.col_shift)
+    col_shift = options.col_shift;
 else
     col_shift = 0;
+end 
+options.col_shift = col_shift;
+if col_shift 
+    fprintf('Offset %1.1d pixels due to bidirectional scanning detected. \n',col_shift); 
+    if strcmpi(options.shifts_method,'fft')
+        options.shifts_method = 'cubic';
+        fprintf('Cubic shifts will be applied. \n'); 
+    end
 end
-
-
 %% read initial batch and compute template
 
 init_batch = min(T,init_batch);
@@ -133,7 +135,7 @@ switch filetype
             Y_temp(:,:,tt) = imread(Y,'Index',perm(tt),'Info',tiffInfo);
         end
     case 'hdf5'
-        Y_temp = bigread2(Y,1,init_batch);        
+        Y_temp = read_file(Y,1,init_batch);        
     case 'mem'
         if nd == 2; Y_temp = Y.(var_name)(:,:,1:init_batch); elseif nd == 3; Y_temp = Y.(var_name)(:,:,:,1:init_batch); end
     case 'mat'
